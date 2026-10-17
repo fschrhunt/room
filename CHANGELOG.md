@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.1.0 · 2026-10-17
 
 - Initial release: `add`, `status`, `doctor`, `logs`, `mount`, `unmount`,
