@@ -1,0 +1,373 @@
+#!/bin/sh
+# room — mount SMB shares at login on macOS, the native way.
+#
+# room registers an SMB share, writes a launchd agent for it, and keeps the share
+# mounted: the agent waits for the host to answer, then asks Finder
+# (`mount volume`) to mount it, so the password comes from the login keychain and
+# the volume behaves like any other. No kernel extension, no FUSE, no Apple
+# Developer account.
+#
+# Commands:
+#   room add smb://user@host/share   register, mount now, and load the agent
+#   room list                        show shares and mount state
+#   room status [name]               agent state and last log line
+#   room logs <name>                 show the share's log
+#   room mount|unmount <name>        control a share now
+#   room remove <name>               unload the agent and forget the share
+#   room uninstall                   remove every share and agent
+set -eu
+
+VERSION="0.1.0"
+
+# Resolved through variables so tests can substitute stubs.
+MOUNT=${ROOM_MOUNT:-/sbin/mount}
+NC=${ROOM_NC:-/usr/bin/nc}
+OSASCRIPT=${ROOM_OSASCRIPT:-/usr/bin/osascript}
+LAUNCHCTL=${ROOM_LAUNCHCTL:-/bin/launchctl}
+DISKUTIL=${ROOM_DISKUTIL:-/usr/sbin/diskutil}
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/room/shares"
+LOG_DIR="$HOME/Library/Logs"
+AGENT_DIR="$HOME/Library/LaunchAgents"
+REACH_TRIES=${ROOM_REACH_TRIES:-12}
+REACH_WAIT=${ROOM_REACH_WAIT:-8}
+MOUNT_TRIES=${ROOM_MOUNT_TRIES:-5}
+MOUNT_WAIT=${ROOM_MOUNT_WAIT:-5}
+
+SELF=$0
+case $SELF in
+/*) ;;
+*) SELF=$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0") ;;
+esac
+
+say() { printf '%s\n' "$*"; }
+warn() { printf 'room: %s\n' "$*" >&2; }
+die() {
+  printf 'room: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+room — mount SMB shares at login on macOS, the native way.
+
+usage:
+  room add <smb://user@host/share> [--name NAME] [--volume PATH]
+  room list
+  room status [NAME]
+  room logs NAME
+  room mount NAME
+  room unmount NAME
+  room remove NAME
+  room uninstall
+  room version
+
+The share's password is read from the login keychain. Run `room add` while logged
+in so Finder can ask for it once; after that the launchd agent keeps it mounted.
+EOF
+}
+
+config_file() { printf '%s/%s' "$CONFIG_DIR" "$1"; }
+log_file() { printf '%s/room.%s.log' "$LOG_DIR" "$1"; }
+plist_file() { printf '%s/room.%s.plist' "$AGENT_DIR" "$1"; }
+label() { printf 'room.%s' "$1"; }
+
+name_for() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-'; }
+
+config_get() { awk -F= -v k="$2" '$1==k { sub(/^[^=]*=/, ""); print; exit }' "$1"; }
+
+log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$(log_file "$NAME")"; }
+
+parse_url() {
+  case $1 in
+  smb://*) _rest=${1#smb://} ;;
+  //*) _rest=${1#//} ;;
+  *) die "not an smb:// URL: $1" ;;
+  esac
+  case $_rest in
+  */*)
+    _auth=${_rest%%/*}
+    _share=${_rest#*/}
+    ;;
+  *) die "URL has no share: $1" ;;
+  esac
+  _share=${_share%%/*}
+  [ -n "$_share" ] || die "URL has no share: $1"
+  case $_auth in
+  *@*)
+    _cred=${_auth%@*}
+    case $_cred in *:*) die "refusing a password in the URL; let the keychain hold it" ;; esac
+    USER=${_cred##*;}
+    SERVER=${_auth##*@}
+    ;;
+  *)
+    USER=$(id -un)
+    SERVER=$_auth
+    ;;
+  esac
+  [ -n "$SERVER" ] || die "URL has no server: $1"
+  SHARE=$_share
+}
+
+load_config() {
+  NAME=$1
+  _cfg=$(config_file "$NAME")
+  [ -f "$_cfg" ] || die "no such share: $NAME"
+  SERVER=$(config_get "$_cfg" server)
+  SHARE=$(config_get "$_cfg" share)
+  USER=$(config_get "$_cfg" user)
+  VOLUME=$(config_get "$_cfg" volume)
+  [ -n "$SERVER" ] && [ -n "$SHARE" ] && [ -n "$VOLUME" ] || die "corrupt config: $_cfg"
+  URL="smb://${USER}@${SERVER}/${SHARE}"
+}
+
+is_mounted() { "$MOUNT" | grep -q " on ${VOLUME} "; }
+
+write_config() {
+  mkdir -p "$CONFIG_DIR"
+  (
+    umask 077
+    {
+      printf 'server=%s\n' "$SERVER"
+      printf 'share=%s\n' "$SHARE"
+      printf 'user=%s\n' "$USER"
+      printf 'volume=%s\n' "$VOLUME"
+    } >"$(config_file "$NAME")"
+  )
+}
+
+write_plist() {
+  mkdir -p "$AGENT_DIR"
+  cat >"$(plist_file "$NAME")" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$(label "$NAME")</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${SELF}</string>
+    <string>agent</string>
+    <string>${NAME}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+</dict>
+</plist>
+EOF
+}
+
+bootstrap_agent() {
+  "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$(plist_file "$NAME")" 2>/dev/null && return 0
+  "$LAUNCHCTL" load "$(plist_file "$NAME")" 2>/dev/null && return 0
+  warn "could not load the agent; load it with: launchctl bootstrap gui/$(id -u) $(plist_file "$NAME")"
+  return 1
+}
+
+bootout_agent() {
+  "$LAUNCHCTL" bootout "gui/$(id -u)/$(label "$NAME")" 2>/dev/null && return 0
+  "$LAUNCHCTL" unload "$(plist_file "$NAME")" 2>/dev/null || true
+}
+
+cmd_add() {
+  _url='' _name='' _volume=''
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --name)
+      [ $# -ge 2 ] || die "--name needs a value"
+      _name=$2
+      shift 2
+      ;;
+    --name=*)
+      _name=${1#--name=}
+      shift
+      ;;
+    --volume)
+      [ $# -ge 2 ] || die "--volume needs a path"
+      _volume=$2
+      shift 2
+      ;;
+    --volume=*)
+      _volume=${1#--volume=}
+      shift
+      ;;
+    -*) die "unknown option: $1" ;;
+    *)
+      [ -z "$_url" ] || die "unexpected argument: $1"
+      _url=$1
+      shift
+      ;;
+    esac
+  done
+  [ -n "$_url" ] || die "usage: room add <smb://user@host/share> [--name NAME]"
+  parse_url "$_url"
+  NAME=${_name:-$(name_for "$SHARE")}
+  VOLUME=${_volume:-/Volumes/$SHARE}
+  [ -e "$(config_file "$NAME")" ] && die "share '$NAME' already exists; remove it first"
+  mkdir -p "$LOG_DIR"
+  write_config
+  write_plist
+  bootstrap_agent || true
+  load_config "$NAME"
+  say "added $NAME: $URL -> $VOLUME"
+  say "agent: $(plist_file "$NAME")"
+  say "log:   $(log_file "$NAME")"
+  cmd_mount "$NAME"
+}
+
+cmd_mount() {
+  NAME=${1:-}
+  [ -n "$NAME" ] || die "usage: room mount NAME"
+  load_config "$NAME"
+  if is_mounted; then
+    say "$NAME is already mounted at $VOLUME"
+    return 0
+  fi
+  _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
+  if is_mounted; then
+    say "$NAME mounted at $VOLUME"
+  else
+    warn "could not mount $NAME: ${_out:-no error output}"
+    warn "the agent will retry every minute; connect once in Finder if the password is missing"
+    return 1
+  fi
+}
+
+cmd_unmount() {
+  NAME=${1:-}
+  [ -n "$NAME" ] || die "usage: room unmount NAME"
+  load_config "$NAME"
+  if is_mounted; then
+    "$DISKUTIL" unmount "$VOLUME" >/dev/null 2>&1 || true
+    say "unmounted $NAME"
+  fi
+}
+
+cmd_remove() {
+  NAME=${1:-}
+  [ -n "$NAME" ] || die "usage: room remove NAME"
+  load_config "$NAME"
+  bootout_agent || true
+  cmd_unmount "$NAME"
+  rm -f "$(plist_file "$NAME")" "$(config_file "$NAME")" "$(log_file "$NAME")"
+  say "removed $NAME"
+}
+
+cmd_list() {
+  [ -d "$CONFIG_DIR" ] || {
+    say "no shares configured"
+    return 0
+  }
+  _n=0
+  for _cfg in "$CONFIG_DIR"/*; do
+    [ -f "$_cfg" ] || continue
+    _n=$((_n + 1))
+    _name=$(basename "$_cfg")
+    NAME=$_name
+    SERVER=$(config_get "$_cfg" server)
+    SHARE=$(config_get "$_cfg" share)
+    USER=$(config_get "$_cfg" user)
+    VOLUME=$(config_get "$_cfg" volume)
+    if [ -n "$VOLUME" ] && is_mounted; then _state=mounted; else _state=down; fi
+    printf '%-14s %-8s smb://%s@%s/%s -> %s\n' "$_name" "$_state" "$USER" "$SERVER" "$SHARE" "$VOLUME"
+  done
+  [ "$_n" -gt 0 ] || say "no shares configured"
+}
+
+cmd_status() {
+  NAME=${1:-}
+  if [ -n "$NAME" ]; then
+    load_config "$NAME"
+    "$LAUNCHCTL" print "gui/$(id -u)/$(label "$NAME")" 2>/dev/null | grep -E 'state = |last exit code = |runs = ' || say "$NAME: agent not loaded"
+    tail -n 1 "$(log_file "$NAME")" 2>/dev/null || true
+  else
+    cmd_list
+  fi
+}
+
+cmd_logs() {
+  NAME=${1:-}
+  [ -n "$NAME" ] || die "usage: room logs NAME"
+  [ -f "$(log_file "$NAME")" ] || die "no log for $NAME"
+  tail -n 40 "$(log_file "$NAME")"
+}
+
+cmd_agent() {
+  NAME=${1:-}
+  [ -n "$NAME" ] || die "usage: room agent NAME"
+  load_config "$NAME"
+  mkdir -p "$LOG_DIR"
+  is_mounted && exit 0
+  _lock="$LOG_DIR/.room.$NAME.lock"
+  mkdir "$_lock" 2>/dev/null || exit 0
+  trap 'rmdir "$_lock" 2>/dev/null' EXIT HUP INT TERM
+  _i=0
+  while [ "$_i" -lt "$REACH_TRIES" ]; do
+    "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1 && break
+    _i=$((_i + 1))
+    sleep "$REACH_WAIT"
+    is_mounted && exit 0
+  done
+  if [ "$_i" -ge "$REACH_TRIES" ]; then
+    log "server ${SERVER}:445 unreachable; skipping"
+    exit 0
+  fi
+  if [ -d "$VOLUME" ] && ! is_mounted; then
+    rmdir "$VOLUME" 2>/dev/null || true
+  fi
+  _n=1
+  while [ "$_n" -le "$MOUNT_TRIES" ]; do
+    _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
+    if is_mounted; then
+      log "mounted ${VOLUME} (attempt ${_n})"
+      exit 0
+    fi
+    log "attempt ${_n} failed: ${_out:-no error output}"
+    _n=$((_n + 1))
+    sleep "$MOUNT_WAIT"
+  done
+  log "gave up mounting ${VOLUME}"
+  exit 1
+}
+
+cmd_uninstall() {
+  if [ -d "$CONFIG_DIR" ]; then
+    for _cfg in "$CONFIG_DIR"/*; do
+      [ -f "$_cfg" ] || continue
+      cmd_remove "$(basename "$_cfg")"
+    done
+  fi
+  rmdir "$CONFIG_DIR" 2>/dev/null || true
+  rmdir "$(dirname "$CONFIG_DIR")" 2>/dev/null || true
+  say "removed all room shares. Delete this script to finish: $SELF"
+}
+
+main() {
+  [ $# -gt 0 ] || {
+    usage
+    return 0
+  }
+  _cmd=$1
+  shift
+  case $_cmd in
+  add) cmd_add "$@" ;;
+  list | ls) cmd_list "$@" ;;
+  status) cmd_status "$@" ;;
+  logs | log) cmd_logs "$@" ;;
+  mount) cmd_mount "$@" ;;
+  unmount | umount) cmd_unmount "$@" ;;
+  remove | rm) cmd_remove "$@" ;;
+  agent) cmd_agent "$@" ;;
+  uninstall) cmd_uninstall "$@" ;;
+  version | --version | -V) say "room $VERSION" ;;
+  help | --help | -h) usage ;;
+  *) die "unknown command: $_cmd (try: room help)" ;;
+  esac
+}
+
+main "$@"

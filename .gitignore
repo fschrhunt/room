@@ -1,0 +1,5 @@
+.DS_Store
+*.log
+
+# macOS AppleDouble sidecars (SMB shares without xattr support)
+._*
