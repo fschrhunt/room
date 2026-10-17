@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.1.1 · 2026-10-17
 
 - Homebrew: install the release archive correctly, and document the explicit
