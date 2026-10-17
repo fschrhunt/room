@@ -255,10 +255,10 @@ cmd_doctor() {
   else
     warn "server:   ${SERVER}:445 unreachable"
   fi
-  if "$SECURITY" find-internet-password -s "$SERVER" -a "$USER" >/dev/null 2>&1; then
-    say "keychain: credential present"
+  if "$SECURITY" find-internet-password -s "$SERVER" >/dev/null 2>&1; then
+    say "keychain: a saved credential exists for $SERVER"
   else
-    warn "keychain: no credential for ${USER}@${SERVER}"
+    warn "keychain: no saved credential for $SERVER; the first mount will ask Finder"
   fi
 }
 
