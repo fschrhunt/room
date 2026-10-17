@@ -99,7 +99,10 @@ jobs:
           rm -rf "$dir"
           (cd dist && sha256sum -- "room-$plain.tar.gz" > checksums.txt)
       # Proves the archive was built here, from this tag: gh attestation verify FILE -R fschrhunt/room
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      # Attestations are unavailable for user-owned private repositories.
+      - name: Attest release artifacts
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*.tar.gz
       - name: Publish the release
