@@ -59,8 +59,12 @@ share once. That first mount runs in your session, so Finder can ask for the
 password and remember it in the keychain. From then on the agent keeps it
 mounted, including after a restart or a wake.
 
+Run `room` with no arguments for status, or `room doctor` for a full check.
+`room add` is safe to re-run.
+
 ```sh
 room status            # mount and agent state
+room doctor            # check config, agent, server and keychain
 room logs              # the log
 room mount             # mount now
 room unmount           # unmount now
@@ -78,6 +82,7 @@ lets Finder do the mounting.
 | Config | `~/.config/room/config` |
 | Agent | `~/Library/LaunchAgents/room.plist` (label `room`) |
 | Log | `~/Library/Logs/room.log` |
+| Path | `~/room`, a symlink to the mounted share |
 
 The agent runs `room agent`, which waits for the host, clears a stale
 mount point left by an unclean unmount, and retries the mount a few times. It is

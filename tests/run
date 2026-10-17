@@ -32,6 +32,10 @@ cat >"$tmp/bin/diskutil" <<'EOF'
 #!/bin/sh
 rm -f "$ROOM_TEST_DIR/mounted"
 EOF
+cat >"$tmp/bin/security" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
 chmod 755 "$tmp/bin/"*
 
 export ROOM_MOUNT="$tmp/bin/mount"
@@ -39,6 +43,7 @@ export ROOM_NC="$tmp/bin/nc"
 export ROOM_OSASCRIPT="$tmp/bin/osascript"
 export ROOM_LAUNCHCTL="$tmp/bin/launchctl"
 export ROOM_DISKUTIL="$tmp/bin/diskutil"
+export ROOM_SECURITY="$tmp/bin/security"
 export ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share (smbfs, nodev)'
 
 fails=0
@@ -64,15 +69,18 @@ assert_file "$plist" "add writes agent plist"
 assert_contains "$plist" '<string>room</string>' "plist label is room"
 assert_contains "$tmp/launchctl.log" 'bootstrap gui/' "agent bootstrapped"
 
-# A second add is refused while room is set up.
-if "$room" add smb://user@server.local/Other >/dev/null 2>&1; then
-  fail "second add refused"
-else
-  pass "second add refused"
-fi
+# add is idempotent, so it can be re-run from any device.
+"$room" add smb://user@server.local/Share >/dev/null
+assert_file "$cfg" "re-adding keeps the config"
+
+# the share is linked at ~/room for a stable path.
+if [ -L "$HOME/room" ]; then pass "room link created"; else fail "room link created"; fi
 
 # status reports the mounted share.
 if "$room" status | grep -q 'mounted'; then pass "status shows mounted"; else fail "status shows mounted"; fi
+
+# doctor reports the setup.
+if "$room" doctor | grep -q 'share:'; then pass "doctor reports"; else fail "doctor reports"; fi
 
 # A password embedded in the URL is refused.
 if "$room" add 'smb://user:secret@server.local/Share' >/dev/null 2>&1; then

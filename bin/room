@@ -21,6 +21,7 @@ NC=${ROOM_NC:-/usr/bin/nc}
 OSASCRIPT=${ROOM_OSASCRIPT:-/usr/bin/osascript}
 LAUNCHCTL=${ROOM_LAUNCHCTL:-/bin/launchctl}
 DISKUTIL=${ROOM_DISKUTIL:-/usr/sbin/diskutil}
+SECURITY=${ROOM_SECURITY:-/usr/bin/security}
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/room/config"
 LOG_FILE="$HOME/Library/Logs/room.log"
@@ -56,8 +57,11 @@ usage:
   room mount                         mount now
   room unmount                       unmount now
   room remove                        unload the agent and forget the share
+  room doctor                        check config, agent, server and keychain
   room uninstall                     remove room entirely
   room version
+
+Run `room` with no arguments to see the current state.
 
 The share's password is read from the login keychain. Run `room add` while logged
 in so Finder can ask for it once; after that the launchd agent keeps it mounted.
@@ -111,6 +115,13 @@ load_config() {
 
 is_mounted() { "$MOUNT" | grep -q " on ${VOLUME} "; }
 
+# Expose the share at ~/room, but never touch an existing path there.
+ensure_link() {
+  if [ ! -e "$HOME/room" ] && [ ! -L "$HOME/room" ]; then
+    ln -s "$VOLUME" "$HOME/room"
+  fi
+}
+
 write_config() {
   mkdir -p "$(dirname "$CONFIG_FILE")"
   (
@@ -163,12 +174,12 @@ bootout_agent() {
 
 cmd_add() {
   [ $# -eq 1 ] || die "usage: room add <smb://user@host/share>"
-  [ -f "$CONFIG_FILE" ] && die "room is already set up; run 'room remove' first"
   parse_url "$1"
   VOLUME="/Volumes/$SHARE"
   mkdir -p "$(dirname "$CONFIG_FILE")" "$(dirname "$LOG_FILE")"
   write_config
   write_plist
+  bootout_agent || true
   bootstrap_agent || true
   load_config
   say "registered $URL -> $VOLUME"
@@ -185,6 +196,7 @@ cmd_mount() {
   fi
   _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
   if is_mounted; then
+    ensure_link
     say "mounted $VOLUME"
   else
     warn "could not mount: ${_out:-no error output}"
@@ -220,6 +232,34 @@ cmd_status() {
 cmd_logs() {
   [ -f "$LOG_FILE" ] || die "no log yet"
   tail -n 40 "$LOG_FILE"
+}
+
+cmd_doctor() {
+  load_config
+  say "config:   $CONFIG_FILE"
+  say "share:    $URL"
+  say "volume:   $VOLUME"
+  if [ -L "$HOME/room" ]; then
+    say "path:     $HOME/room -> $(readlink "$HOME/room")"
+  else
+    warn "path:     $HOME/room missing"
+  fi
+  if "$LAUNCHCTL" print "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1; then
+    say "agent:    loaded"
+  else
+    warn "agent:    not loaded"
+  fi
+  if is_mounted; then say "mount:    mounted"; else warn "mount:    not mounted"; fi
+  if "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1; then
+    say "server:   ${SERVER}:445 reachable"
+  else
+    warn "server:   ${SERVER}:445 unreachable"
+  fi
+  if "$SECURITY" find-internet-password -s "$SERVER" -a "$USER" >/dev/null 2>&1; then
+    say "keychain: credential present"
+  else
+    warn "keychain: no credential for ${USER}@${SERVER}"
+  fi
 }
 
 cmd_agent() {
@@ -269,15 +309,20 @@ cmd_uninstall() {
 }
 
 main() {
-  [ $# -gt 0 ] || {
-    usage
+  if [ $# -eq 0 ]; then
+    if [ -f "$CONFIG_FILE" ]; then
+      cmd_status
+    else
+      usage
+    fi
     return 0
-  }
+  fi
   _cmd=$1
   shift
   case $_cmd in
   add) cmd_add "$@" ;;
   status) cmd_status "$@" ;;
+  doctor) cmd_doctor "$@" ;;
   logs | log) cmd_logs "$@" ;;
   mount) cmd_mount "$@" ;;
   unmount | umount) cmd_unmount "$@" ;;
