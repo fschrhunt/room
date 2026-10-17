@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Homebrew: install the release archive correctly, and document the explicit
+  tap URL the repository needs.
+
 ## v0.1.0 · 2026-10-17
 
 - Initial release: `add`, `status`, `doctor`, `logs`, `mount`, `unmount`,

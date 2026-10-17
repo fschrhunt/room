@@ -32,7 +32,7 @@ class Room < Formula
   end
 
   def install
-    bin.install "room-$plain/room" => "room"
+    bin.install "room"
   end
 
   def caveats

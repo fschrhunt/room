@@ -32,10 +32,10 @@ trusts:
 
 ## Install
 
-With Homebrew:
+With Homebrew (the repository is its own tap):
 
 ```sh
-brew tap fschrhunt/room && brew install room
+brew tap fschrhunt/room https://github.com/fschrhunt/room && brew install room
 ```
 
 Or with the installer, which checks the latest release against its checksums:

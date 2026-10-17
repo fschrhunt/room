@@ -14,7 +14,7 @@ class Room < Formula
   end
 
   def install
-    bin.install "room-0.1.0/room" => "room"
+    bin.install "room"
   end
 
   def caveats
