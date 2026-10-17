@@ -134,6 +134,9 @@ jobs:
 
   install:
     needs: release
+    # Release assets on a private repository need auth, which install.sh does not
+    # send; the install test runs once the repository is public.
+    if: github.event.repository.visibility == 'public'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
