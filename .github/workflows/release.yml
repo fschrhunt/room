@@ -67,7 +67,10 @@ jobs:
       - name: Install lint tools
         run: brew install shellcheck shfmt actionlint
       - run: ./x check
-      - run: ./x release-check "$TAG"
+      - name: Check the changelog section
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./x release-check "$TAG"
 
   release:
     needs: check
