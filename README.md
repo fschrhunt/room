@@ -32,7 +32,13 @@ trusts:
 
 ## Install
 
-One shell script. Take it with the installer:
+With Homebrew:
+
+```sh
+brew tap fschrhunt/room && brew install room
+```
+
+Or with the installer, which checks the latest release against its checksums:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/fschrhunt/room/main/install.sh | sh

@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    labels: []
+    directory: /
+    schedule:
+      interval: weekly
+    # One pull request a week rather than one per action.
+    groups:
+      actions:
+        patterns: ["*"]

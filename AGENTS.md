@@ -15,5 +15,6 @@
   logic with stubbed binaries (`tests/run`), not by asserting macOS behavior.
 - Secrets stay in the login keychain. Never accept a password in a URL or write
   one to config or logs.
-- Verify with `./x check` (shellcheck, shfmt, tests). Keep changes small, follow
-  the existing 2-space shell style, and update every comment/doc a change touches.
+- Verify with `./x check` (shellcheck, shfmt, tests and `scripts/guard.sh`). Keep
+  changes small, follow the existing 2-space shell style, add user-visible changes
+  to CHANGELOG.md under `## Unreleased`, and update every comment/doc a change touches.

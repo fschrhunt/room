@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.1.0
+## Unreleased
 
-- Initial release: `add`, `status`, `logs`, `mount`, `unmount`, `remove` and
-  `uninstall`, managing one share under the fixed `room` agent label.
-- launchd agent per share with host reachability gating, stale-mountpoint
-  cleanup and mount retries.
-- Keychain-native mounting through Finder's `mount volume`; no signing,
-  notarization, kernel extension or FUSE.
+- Initial release: `add`, `status`, `doctor`, `logs`, `mount`, `unmount`,
+  `remove` and `uninstall`, managing one SMB share under the fixed `room`
+  identity.
+- launchd agent (label `room`) with host-reachability gating, stale-mountpoint
+  cleanup and mount retries. The mount goes through Finder's `mount volume`, so
+  the password stays in the login keychain.
+- Homebrew formula `room.rb`; release archives carry checksums and build
+  provenance.
