@@ -60,13 +60,12 @@ password and remember it in the keychain. From then on the agent keeps it
 mounted, including after a restart or a wake.
 
 ```sh
-room list              # shares and mount state
-room status share      # agent state and last log line
-room logs share        # the share's log
-room mount share       # mount now
-room unmount share     # unmount now
-room remove share      # unload the agent, unmount, forget the share
-room uninstall         # remove every share and agent
+room status            # mount and agent state
+room logs              # the log
+room mount             # mount now
+room unmount           # unmount now
+room remove            # unload the agent, unmount, forget the share
+room uninstall         # remove room entirely
 ```
 
 ## How it works
@@ -76,11 +75,11 @@ lets Finder do the mounting.
 
 | What | Where |
 | --- | --- |
-| Config | `~/.config/room/shares/<name>` |
-| Agent | `~/Library/LaunchAgents/room.<name>.plist` |
-| Log | `~/Library/Logs/room.<name>.log` |
+| Config | `~/.config/room/config` |
+| Agent | `~/Library/LaunchAgents/room.plist` (label `room`) |
+| Log | `~/Library/Logs/room.log` |
 
-The agent runs `room agent <name>`, which waits for the host, clears a stale
+The agent runs `room agent`, which waits for the host, clears a stale
 mount point left by an unclean unmount, and retries the mount a few times. It is
 safe to run every minute.
 
@@ -89,7 +88,7 @@ safe to run every minute.
 - macOS only. The mount itself is Finder's, by design.
 - The first `room add` needs a logged-in session so Finder can prompt for the
   password. Adding a share over SSH? Connect once in Finder to seed the keychain.
-- One share per agent; add several shares to get several agents.
+- room manages one share.
 - Each share appears under **Allow in the Background** in System Settings →
   General → Login Items & Extensions. Turning it off stops the mount.
 

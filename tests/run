@@ -54,26 +54,25 @@ assert_contains() {
   if grep -q "$2" "$1"; then pass "$3"; else fail "$3 ($2 not in $1)"; fi
 }
 
-# add writes config + plist, loads the agent, and mounts.
+# add writes config + agent plist, loads the agent, and mounts.
 "$room" add smb://fschr@host/Room >/dev/null
-cfg=$HOME/.config/room/shares/room
+cfg=$HOME/.config/room/config
 assert_file "$cfg" "add writes config"
 assert_contains "$cfg" '^volume=/Volumes/Room$' "add records volume"
-plist=$HOME/Library/LaunchAgents/room.room.plist
+plist=$HOME/Library/LaunchAgents/room.plist
 assert_file "$plist" "add writes agent plist"
-assert_contains "$plist" '<string>room.room</string>' "plist label"
+assert_contains "$plist" '<string>room</string>' "plist label is room"
 assert_contains "$tmp/launchctl.log" 'bootstrap gui/' "agent bootstrapped"
 
-# list reports the mounted share.
-if "$room" list | grep -q '^room .*mounted'; then
-  pass "list shows mounted"
+# A second add is refused while room is set up.
+if "$room" add smb://fschr@host/Other >/dev/null 2>&1; then
+  fail "second add refused"
 else
-  fail "list shows mounted"
+  pass "second add refused"
 fi
 
-# --name overrides the derived name.
-"$room" add smb://fschr@host/Other --name side --volume /Volumes/Room >/dev/null
-assert_file "$HOME/.config/room/shares/side" "add --name config"
+# status reports the mounted share.
+if "$room" status | grep -q 'mounted'; then pass "status shows mounted"; else fail "status shows mounted"; fi
 
 # A password embedded in the URL is refused.
 if "$room" add 'smb://fschr:secret@host/Room' >/dev/null 2>&1; then
@@ -83,7 +82,7 @@ else
 fi
 
 # remove unloads the agent and deletes the files.
-"$room" remove room >/dev/null
+"$room" remove >/dev/null
 if [ -f "$cfg" ]; then fail "remove deletes config"; else pass "remove deletes config"; fi
 if grep -q 'bootout gui/' "$tmp/launchctl.log"; then pass "agent booted out"; else fail "agent booted out"; fi
 

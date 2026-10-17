@@ -5,9 +5,9 @@
   mounts the share using the login keychain. Keep the surface small and the
   implementation in POSIX `sh` — this is glue over macOS, not an app.
 - Single binary: `bin/room` is both the CLI and the launchd entry point
-  (`room agent <name>`). Config is `~/.config/room/shares/<name>`, agents are
-  `~/Library/LaunchAgents/room.<name>.plist`, logs are
-  `~/Library/Logs/room.<name>.log`.
+  (`room agent`). room manages one share under the fixed `room` identity: config
+  `~/.config/room/config`, agent `~/Library/LaunchAgents/room.plist` (label
+  `room`), log `~/Library/Logs/room.log`. Never introduce per-share names.
 - Onboarding is part of the product: `room add` must write config, install and
   load the agent, then mount once interactively so the keychain gets seeded.
   Never make a background agent responsible for first-time authentication.
