@@ -4,8 +4,8 @@
 class Room < Formula
   desc "Mount an SMB share at login on macOS, the native way"
   homepage "https://github.com/fschrhunt/room"
-  url "https://github.com/fschrhunt/room/releases/download/v0.1.0/room-0.1.0.tar.gz"
-  sha256 "c62d96ec467014a563f6c158d25b6f123c7175602862adb84a34261b293ca84c"
+  url "https://github.com/fschrhunt/room/releases/download/v0.1.1/room-0.1.1.tar.gz"
+  sha256 "a2eab1974ccac19a9c5b4fc06f6be3c2f05f4da0e33db087c498cd40e2512b12"
   license "MIT"
 
   livecheck do
@@ -24,6 +24,6 @@ class Room < Formula
   end
 
   test do
-    assert_equal "room 0.1.0", shell_output("#{bin}/room version").strip
+    assert_equal "room 0.1.1", shell_output("#{bin}/room version").strip
   end
 end
