@@ -39,7 +39,7 @@ export ROOM_NC="$tmp/bin/nc"
 export ROOM_OSASCRIPT="$tmp/bin/osascript"
 export ROOM_LAUNCHCTL="$tmp/bin/launchctl"
 export ROOM_DISKUTIL="$tmp/bin/diskutil"
-export ROOM_TEST_MOUNT='//fschr@host/Room on /Volumes/Room (smbfs, nodev)'
+export ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share (smbfs, nodev)'
 
 fails=0
 pass() { echo "ok   $1"; }
@@ -55,17 +55,17 @@ assert_contains() {
 }
 
 # add writes config + agent plist, loads the agent, and mounts.
-"$room" add smb://fschr@host/Room >/dev/null
+"$room" add smb://user@server.local/Share >/dev/null
 cfg=$HOME/.config/room/config
 assert_file "$cfg" "add writes config"
-assert_contains "$cfg" '^volume=/Volumes/Room$' "add records volume"
+assert_contains "$cfg" '^volume=/Volumes/Share$' "add records volume"
 plist=$HOME/Library/LaunchAgents/room.plist
 assert_file "$plist" "add writes agent plist"
 assert_contains "$plist" '<string>room</string>' "plist label is room"
 assert_contains "$tmp/launchctl.log" 'bootstrap gui/' "agent bootstrapped"
 
 # A second add is refused while room is set up.
-if "$room" add smb://fschr@host/Other >/dev/null 2>&1; then
+if "$room" add smb://user@server.local/Other >/dev/null 2>&1; then
   fail "second add refused"
 else
   pass "second add refused"
@@ -75,7 +75,7 @@ fi
 if "$room" status | grep -q 'mounted'; then pass "status shows mounted"; else fail "status shows mounted"; fi
 
 # A password embedded in the URL is refused.
-if "$room" add 'smb://fschr:secret@host/Room' >/dev/null 2>&1; then
+if "$room" add 'smb://user:secret@server.local/Share' >/dev/null 2>&1; then
   fail "reject embedded password"
 else
   pass "reject embedded password"
