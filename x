@@ -18,9 +18,18 @@ usage: ./x [command] [args...]
 EOF
 }
 
-# Resolve a checksum-pinned tool, falling back to PATH.
+# Resolve a checksum-pinned tool; fall back to PATH only when the host is unpinned.
 tool() {
-  _pinned=$(python3 scripts/tools.py ensure "$1" 2>/dev/null) || _pinned=''
+  if ! command -v python3 >/dev/null 2>&1; then
+    command -v "$1" 2>/dev/null || true
+    return 0
+  fi
+  _rc=0
+  _pinned=$(python3 scripts/tools.py ensure "$1") || _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    echo "x: could not install pinned $1" >&2
+    return 1
+  fi
   if [ -n "$_pinned" ]; then
     printf '%s' "$_pinned"
   else
