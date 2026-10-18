@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Checksum-pin shellcheck, shfmt and actionlint in `.github/infra-tools.json`
+  instead of installing the latest of each with `brew`.
+
 ## v0.1.1 · 2026-10-17
 
 - Homebrew: install the release archive correctly, and document the explicit

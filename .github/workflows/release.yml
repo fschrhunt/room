@@ -64,8 +64,6 @@ jobs:
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$TAG is not on main" >&2; exit 1; }
           grep -q "^## $TAG " CHANGELOG.md || { echo "CHANGELOG.md has no ## $TAG section" >&2; exit 1; }
-      - name: Install lint tools
-        run: brew install shellcheck shfmt actionlint
       - run: ./x check
       - name: Check the changelog section
         env:
