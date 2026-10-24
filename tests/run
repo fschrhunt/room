@@ -41,6 +41,14 @@ cat >"$tmp/bin/probe-hang" <<'EOF'
 #!/bin/sh
 sleep 30
 EOF
+cat >"$tmp/bin/probe-slow" <<'EOF'
+#!/bin/sh
+sleep 2
+EOF
+cat >"$tmp/bin/nc-down" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
 cat >"$tmp/bin/security" <<'EOF'
 #!/bin/sh
 exit 0
@@ -55,6 +63,7 @@ export ROOM_DISKUTIL="$tmp/bin/diskutil"
 export ROOM_SECURITY="$tmp/bin/security"
 export ROOM_PROBE="$tmp/bin/probe-ok"
 export ROOM_HEALTH_WAIT=1
+export ROOM_STALE_WAIT=3
 export ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share (smbfs, nodev)'
 
 fails=0
@@ -112,6 +121,15 @@ fi
 # A share Finder mounted at /Volumes/Share-1 is adopted, and room's link follows it.
 ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share-1 (smbfs, nodev)' "$room" agent
 if [ "$(readlink "$HOME/room")" = /Volumes/Share-1 ]; then pass "link follows a moved mount"; else fail "link follows a moved mount"; fi
+
+# A slow but live mount is kept: replacing it would break open files.
+: >"$tmp/diskutil.log"
+ROOM_PROBE="$tmp/bin/probe-slow" "$room" agent
+if [ -s "$tmp/diskutil.log" ]; then fail "slow mount kept"; else pass "slow mount kept"; fi
+
+# While the server is unreachable, a silent mount is left alone; a remount could not work.
+ROOM_PROBE="$tmp/bin/probe-hang" ROOM_NC="$tmp/bin/nc-down" "$room" agent
+if [ -s "$tmp/diskutil.log" ]; then fail "mount kept while server down"; else pass "mount kept while server down"; fi
 
 # A listed mount that no longer answers is unmounted and mounted again.
 : >"$tmp/diskutil.log"

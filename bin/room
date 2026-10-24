@@ -37,6 +37,7 @@ REACH_WAIT=${ROOM_REACH_WAIT:-8}
 MOUNT_TRIES=${ROOM_MOUNT_TRIES:-5}
 MOUNT_WAIT=${ROOM_MOUNT_WAIT:-5}
 HEALTH_WAIT=${ROOM_HEALTH_WAIT:-5}
+STALE_WAIT=${ROOM_STALE_WAIT:-20}
 UNMOUNT_WAIT=${ROOM_UNMOUNT_WAIT:-60}
 LOCK_STALE_MIN=10
 
@@ -388,6 +389,16 @@ cmd_agent() {
   _mp=$(share_mountpoint)
   if [ -n "$_mp" ]; then
     if responsive "$_mp"; then
+      ensure_link "$_mp"
+      exit 0
+    fi
+    # A slow answer is not a dead mount, and replacing a live one breaks open files.
+    # Replace it only while the server is up and a longer second probe also fails.
+    if ! "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1; then
+      log "${_mp} is not responding and ${SERVER}:445 is unreachable; leaving it"
+      exit 0
+    fi
+    if within "$STALE_WAIT" "$PROBE" "$_mp"; then
       ensure_link "$_mp"
       exit 0
     fi

@@ -94,8 +94,10 @@ lets Finder do the mounting.
 The agent runs `room agent` at login and every minute. Each pass:
 
 - **Checks that the mount still answers**, not just that it is listed. A mount
-  whose server restarted or dropped the connection is unmounted and mounted again.
-  The check gives up after a few seconds, so a dead mount never hangs the agent.
+  whose server restarted or dropped the connection is unmounted and mounted again,
+  but only while the server is reachable and a second, longer probe also fails, so
+  a slow answer never costs you open files. Every probe is time-limited, so a dead
+  mount never hangs the agent.
 - **Finds the share wherever Finder put it.** When a leftover mount point holds
   `/Volumes/Share`, Finder mounts at `/Volumes/Share-1`; room adopts that mount and
   repoints `~/room`.
