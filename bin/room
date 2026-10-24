@@ -2,9 +2,9 @@
 # room — mount an SMB share at login on macOS, the native way.
 #
 # room sets up a share, writes the `room` launchd agent, and keeps the share
-# mounted: the agent waits for the host to answer, then asks Finder
-# (`mount volume`) to mount it, so the password comes from the login keychain and
-# the volume behaves like any other. Each pass also checks that the mount still
+# mounted: the agent waits for the host to answer, then mounts it through NetFS,
+# Finder's framework, with no UI, so the password comes from the login keychain, no
+# dialog appears, and the volume behaves like any other. Each pass also checks that the mount still
 # answers and replaces a dead one, and the share is mounted soft, so a server that
 # goes away fails calls instead of hanging them. No kernel extension, no FUSE, no
 # Apple Developer account.
@@ -24,7 +24,7 @@ OSASCRIPT=${ROOM_OSASCRIPT:-/usr/bin/osascript}
 LAUNCHCTL=${ROOM_LAUNCHCTL:-/bin/launchctl}
 DISKUTIL=${ROOM_DISKUTIL:-/usr/sbin/diskutil}
 SECURITY=${ROOM_SECURITY:-/usr/bin/security}
-PROBE=${ROOM_PROBE:-/bin/ls}
+PROBE=${ROOM_PROBE:-probe_statfs}
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/room/config"
 LOG_FILE="$HOME/Library/Logs/room.log"
@@ -148,6 +148,11 @@ within() {
 }
 
 # A mount counts only if it answers: a listed mount whose server is gone hangs.
+# Ask the server for the volume's size (statfs) rather than list it: macOS's Network
+# Volumes privacy rule blocks a background agent from listing the share, which made a
+# healthy mount look dead; statfs still reaches the server, so a dead one still fails.
+probe_statfs() { /usr/bin/stat -f %z "$1"; }
+
 responsive() { within "$HEALTH_WAIT" "$PROBE" "$1"; }
 
 # Expose the share at ~/room. Creates the link, or repoints room's own link when
@@ -197,6 +202,31 @@ remove_soft() {
 }
 
 # Unmount the share wherever it is; force a dead mount off.
+# Mount the share through NetFS, the framework Finder mounts with, so the password still
+# comes from the login keychain, but with no UI: a background pass never raises a dialog. A
+# leftover mount point at $VOLUME that we own is mounted onto directly, so the share never
+# lands at a "-1" name; otherwise NetFS creates $VOLUME under its parent.
+netfs_mount() {
+  if [ -d "$VOLUME" ] && chmod u+rwx "$VOLUME" 2>/dev/null; then
+    set -- "$VOLUME" exact
+  else
+    set -- "$(dirname "$VOLUME")" inside
+  fi
+  "$OSASCRIPT" -l JavaScript - "$URL" "$1" "$2" <<'EOF'
+ObjC.import('Foundation');
+ObjC.import('NetFS');
+function run(argv) {
+  const open = $.NSMutableDictionary.alloc.init;
+  open.setObjectForKey($('NoUI'), $('UIOption'));
+  const mount = $.NSMutableDictionary.alloc.init;
+  if (argv[2] === 'exact') mount.setObjectForKey($.NSNumber.numberWithBool(true), $('MountAtMountDir'));
+  const rc = $.NetFSMountURLSync($.NSURL.URLWithString(argv[0]),
+    $.NSURL.fileURLWithPath(argv[1]), null, null, open, mount, Ref());
+  if (rc !== 0) throw new Error('NetFS error ' + rc);
+}
+EOF
+}
+
 unmount_share() {
   _mp=$(share_mountpoint)
   [ -n "$_mp" ] || return 0
@@ -387,11 +417,16 @@ cmd_agent() {
   take_lock || exit 0
   trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT HUP INT TERM
   _mp=$(share_mountpoint)
-  if [ -n "$_mp" ]; then
-    if responsive "$_mp"; then
-      ensure_link "$_mp"
+  if [ -n "$_mp" ] && responsive "$_mp"; then
+    # A share Finder put under another name (Share-1) moves back to $VOLUME when nothing
+    # holds it open; a busy one is followed instead, since unmounting it breaks open files.
+    if [ "$_mp" = "$VOLUME" ] || ! within "$UNMOUNT_WAIT" "$DISKUTIL" unmount "$_mp" ||
+      [ -n "$(share_mountpoint)" ]; then
+      ensure_link "$(share_mountpoint)"
       exit 0
     fi
+    log "unmounted ${_mp} to mount it at ${VOLUME}"
+  elif [ -n "$_mp" ]; then
     # A slow answer is not a dead mount, and replacing a live one breaks open files.
     # Replace it only while the server is up and a longer second probe also fails.
     if ! "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1; then
@@ -421,7 +456,7 @@ cmd_agent() {
   fi
   _n=1
   while [ "$_n" -le "$MOUNT_TRIES" ]; do
-    _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
+    _out=$(netfs_mount 2>&1) || true
     _mp=$(share_mountpoint)
     if [ -n "$_mp" ]; then
       ensure_link "$_mp"

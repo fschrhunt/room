@@ -20,13 +20,28 @@ cat >"$tmp/bin/nc" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
+# Finder's `mount volume` (-e) mounts at ROOM_TEST_MOUNT; the agent's NetFS call
+# (-l JavaScript - URL DIR MODE) mounts exactly at DIR, or at DIR/Share.
 cat >"$tmp/bin/osascript" <<'EOF'
 #!/bin/sh
-: >"$ROOM_TEST_DIR/mounted"
+printf '%s\n' "$*" >>"$ROOM_TEST_DIR/osascript.log"
+if [ "$1" = -l ]; then
+  cat >/dev/null
+  if [ "$6" = exact ]; then mp=$5; else mp=$5/Share; fi
+  printf '//user@server.local/Share on %s (smbfs, nodev)\n' "$mp" >"$ROOM_TEST_DIR/mounted"
+else
+  : >"$ROOM_TEST_DIR/mounted"
+fi
 EOF
 cat >"$tmp/bin/mount" <<'EOF'
 #!/bin/sh
-[ -f "$ROOM_TEST_DIR/mounted" ] && printf '%s\n' "$ROOM_TEST_MOUNT"
+[ -f "$ROOM_TEST_DIR/mounted" ] || exit 0
+if [ -s "$ROOM_TEST_DIR/mounted" ]; then cat "$ROOM_TEST_DIR/mounted"; else printf '%s\n' "$ROOM_TEST_MOUNT"; fi
+EOF
+cat >"$tmp/bin/diskutil-busy" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$ROOM_TEST_DIR/diskutil.log"
+exit 1
 EOF
 cat >"$tmp/bin/diskutil" <<'EOF'
 #!/bin/sh
@@ -118,9 +133,33 @@ else
   fail "soft mount configured once"
 fi
 
-# A share Finder mounted at /Volumes/Share-1 is adopted, and room's link follows it.
+# A share Finder mounted at /Volumes/Share-1 moves back to /Volumes/Share, without force
+# and without Finder: the agent mounts through NetFS with no UI.
+: >"$tmp/diskutil.log"
+: >"$tmp/osascript.log"
 ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share-1 (smbfs, nodev)' "$room" agent
-if [ "$(readlink "$HOME/room")" = /Volumes/Share-1 ]; then pass "link follows a moved mount"; else fail "link follows a moved mount"; fi
+if [ "$(readlink "$HOME/room")" = /Volumes/Share ] && grep -qx 'unmount /Volumes/Share-1' "$tmp/diskutil.log" &&
+  ! grep -q force "$tmp/diskutil.log"; then
+  pass "moved mount comes back"
+else
+  fail "moved mount comes back"
+fi
+if grep -q -- '-l JavaScript' "$tmp/osascript.log" && ! grep -q 'mount volume' "$tmp/osascript.log"; then
+  pass "agent mounts with no UI"
+else
+  fail "agent mounts with no UI"
+fi
+
+# A Share-1 mount that something holds open is followed rather than unmounted.
+printf '%s\n' '//user@server.local/Share on /Volumes/Share-1 (smbfs, nodev)' >"$tmp/mounted"
+: >"$tmp/osascript.log"
+ROOM_DISKUTIL="$tmp/bin/diskutil-busy" "$room" agent
+if [ "$(readlink "$HOME/room")" = /Volumes/Share-1 ] && [ ! -s "$tmp/osascript.log" ]; then
+  pass "busy moved mount followed"
+else
+  fail "busy moved mount followed"
+fi
+printf '%s\n' '//user@server.local/Share on /Volumes/Share (smbfs, nodev)' >"$tmp/mounted"
 
 # A slow but live mount is kept: replacing it would break open files.
 : >"$tmp/diskutil.log"
@@ -145,6 +184,16 @@ lock=$HOME/Library/Logs/.room.lock
 mkdir "$lock" && touch -t 202001010000 "$lock"
 "$room" agent
 if [ -d "$lock" ]; then fail "stale lock expires"; else pass "stale lock expires"; fi
+
+# A leftover mount point at the volume path is mounted onto, so Finder never picks a -1 name.
+left=$tmp/Volumes/Share
+mkdir -p "$left" && chmod 111 "$left"
+sed -i.bak "s|^volume=.*|volume=$left|" "$cfg"
+rm -f "$tmp/mounted"
+: >"$tmp/osascript.log"
+"$room" agent
+if grep -q -- "$left exact\$" "$tmp/osascript.log" && [ -w "$left" ]; then pass "leftover mount point reused"; else fail "leftover mount point reused"; fi
+mv "$cfg.bak" "$cfg"
 
 # remove unloads the agent and deletes the files.
 "$room" remove >/dev/null

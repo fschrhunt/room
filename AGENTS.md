@@ -1,8 +1,9 @@
 # room development context
 
 - Product: mount SMB shares at login on macOS without a kernel extension, FUSE,
-  or Apple Developer account. launchd runs the agent; Finder's `mount volume`
-  mounts the share using the login keychain. Keep the surface small and the
+  or Apple Developer account. launchd runs the agent; it mounts through NetFS
+  (Finder's framework, from `osascript -l JavaScript`) with no UI, using the login
+  keychain. `room add` mounts once through Finder's `mount volume` so it can prompt. Keep the surface small and the
   implementation in POSIX `sh` — this is glue over macOS, not an app.
 - Single binary: `bin/room` is both the CLI and the launchd entry point
   (`room agent`). room manages one share under the fixed `room` identity: config
@@ -18,7 +19,7 @@
 - Onboarding is part of the product: `room add` must write config, install and
   load the agent, then mount once interactively so the keychain gets seeded.
   Never make a background agent responsible for first-time authentication.
-- Do not claim more than is verified. The mount path is Finder's; test the agent
+- Do not claim more than is verified. The mount path is macOS's (NetFS and Finder); test the agent
   logic with stubbed binaries (`tests/run`), not by asserting macOS behavior.
 - Secrets stay in the login keychain. Never accept a password in a URL or write
   one to config or logs.

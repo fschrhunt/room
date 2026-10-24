@@ -81,7 +81,7 @@ room uninstall         # remove room entirely
 ## How it works
 
 For each share, `room` writes a small config and a per-share launchd agent, then
-lets Finder do the mounting.
+lets macOS's own mount path, NetFS (what Finder uses), do the mounting.
 
 | What | Where |
 | --- | --- |
@@ -98,10 +98,12 @@ The agent runs `room agent` at login and every minute. Each pass:
   but only while the server is reachable and a second, longer probe also fails, so
   a slow answer never costs you open files. Every probe is time-limited, so a dead
   mount never hangs the agent.
-- **Finds the share wherever Finder put it.** When a leftover mount point holds
-  `/Volumes/Share`, Finder mounts at `/Volumes/Share-1`; room adopts that mount and
-  repoints `~/room`.
-- **Waits for the host**, then mounts through Finder and retries a few times.
+- **Keeps the share at `/Volumes/Share`.** A leftover mount point at that name is
+  mounted onto directly, so the share never lands at `/Volumes/Share-1`. A share
+  already at `-1` moves back when nothing has it open, and is followed, with
+  `~/room` repointed, while something does.
+- **Waits for the host**, then mounts with no UI and retries a few times, so a
+  background pass never raises a dialog.
 
 The share is mounted **soft**: when the server goes away, file calls fail after
 about a minute instead of hanging for up to ten, so a dead mount can always be
@@ -117,14 +119,14 @@ notices a dropped connection and mounts the share again.
 
 ## Limitations
 
-- macOS only. The mount itself is Finder's, by design.
+- macOS only. The mount uses NetFS, Finder's own framework, by design.
 - The first `room add` needs a logged-in session so Finder can prompt for the
   password. Adding a share over SSH? Connect once in Finder to seed the keychain.
 - room manages one share.
 - Each share appears under **Allow in the Background** in System Settings →
   General → Login Items & Extensions. Turning it off stops the mount.
-- A mount point left in `/Volumes` by an unclean unmount belongs to root, so room
-  cannot remove it; it follows the share to `/Volumes/Share-1` until a restart
+- A leftover mount point you own (the usual case) is reused. One that belongs to
+  root cannot be; room then follows the share to `/Volumes/Share-1` until a restart
   clears the leftover.
 
 ## License
