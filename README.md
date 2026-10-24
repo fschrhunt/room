@@ -112,10 +112,13 @@ replaced. `room remove` drops the section again.
 ## Room.app (optional)
 
 `scripts/app.sh` builds `Room.app` from `assets/room.icon` (it needs Xcode for
-`actool`) into `~/Applications`. The agent names it as its app, so System Settings
-lists the agent as **Room** with its icon instead of a bare script. Opening the
-app runs one `room agent` pass. It does not replace the agent: only the agent
-notices a dropped connection and mounts the share again.
+`actool`) into `~/Applications`. Add it under Open at Login and it can stand in for
+the agent: it runs one `room agent` pass at login, then stays running and runs
+another each time the Mac wakes or a volume unmounts, so the share reconnects on
+its own after sleep. There is no timer; between events it waits in macOS's run
+loop and uses no CPU. Ejecting the share brings it straight back; quit Room.app to
+keep it off. If the agent is installed too, it names the app, so System Settings
+lists the agent as **Room** with its icon.
 
 ## Limitations
 

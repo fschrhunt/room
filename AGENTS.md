@@ -11,8 +11,9 @@
   `room`), log `~/Library/Logs/room.log`. Never introduce per-share names.
 - `scripts/app.sh` builds the optional `Room.app` from `assets/room.icon`. The
   agent plist names it (`AssociatedBundleIdentifiers`) so System Settings shows
-  the agent as Room. It stays a shell bundle whose only job is one `room agent`
-  pass; never move mount logic into it.
+  the agent as Room. It stays a shell bundle plus a small JXA watcher that runs a
+  `room agent` pass at start and on each wake or unmount event, never on a timer;
+  never move mount logic into it.
 - A mount counts only if it answers. Never touch the mount without a time limit
   (`within`, `responsive`): a dead SMB mount hangs any call into it. Find the
   share with `share_mountpoint`, never by assuming `/Volumes/<share>`.

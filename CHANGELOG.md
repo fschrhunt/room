@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Room.app stays running after login and runs a pass each time the Mac wakes or a
+  volume unmounts, so the share reconnects on its own after sleep, with no timer and
+  no second login item. Ejecting the share brings it back; quit Room.app to keep it
+  off.
 - The mount check asks the server for the volume size instead of listing it. macOS
   blocks a background agent from listing a network volume, so every pass took a
   healthy share for dead and remounted it, breaking open files.

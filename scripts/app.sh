@@ -1,8 +1,9 @@
 #!/bin/sh
 # app: build Room.app. The room agent names it (AssociatedBundleIdentifiers), so
-# System Settings lists the agent as Room with this icon; opening the app runs one
-# `room agent` pass. It reads the same config, so set the share up with `room add`
-# first. The icon is compiled from assets/room.icon with Xcode's actool, so this
+# System Settings lists the agent as Room with this icon. Opened at login, the app
+# runs one `room agent` pass, then stays running with no timer and runs another
+# each time the Mac wakes or a volume unmounts, so the share comes back on its own.
+# It reads the same config, so set the share up with `room add` first. The icon is compiled from assets/room.icon with Xcode's actool, so this
 # needs Xcode.
 #
 #   scripts/app.sh [DEST]   build to DEST (default ~/Applications/Room.app)
@@ -25,11 +26,35 @@ xcrun actool assets/room.icon --compile "$app/Contents/Resources" \
 
 cat >"$app/Contents/MacOS/Room" <<'EOF'
 #!/bin/sh
-# Room.app's entry: one `room agent` pass, so the share mounts at login without polling.
+# Room.app's entry: start the watcher and stay its parent, so the process is named Room.
 PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-exec room agent
+export PATH
+/usr/bin/osascript -l JavaScript "$(dirname "$0")/../Resources/watch.js" &
+trap 'kill $! 2>/dev/null' INT TERM
+wait
 EOF
 chmod 755 "$app/Contents/MacOS/Room"
+
+cat >"$app/Contents/Resources/watch.js" <<'EOF'
+// Room.app's watcher: one `room agent` pass now, then one each time the Mac wakes or a
+// volume unmounts. It waits in the run loop between events, so nothing runs on a timer;
+// each pass runs in the background, and room's lock keeps overlapping events from stacking.
+ObjC.import('Cocoa');
+function pass() {
+  $.NSTask.launchedTaskWithLaunchPathArguments('/bin/sh', $(['-c', 'exec room agent >/dev/null 2>&1']));
+}
+ObjC.registerSubclass({
+  name: 'RoomWatcher',
+  methods: { 'fire:': { types: ['void', ['id']], implementation: pass } },
+});
+const watcher = $.RoomWatcher.alloc.init;
+const center = $.NSWorkspace.sharedWorkspace.notificationCenter;
+[$.NSWorkspaceDidWakeNotification, $.NSWorkspaceDidUnmountNotification].forEach(function (name) {
+  center.addObserverSelectorNameObject(watcher, 'fire:', name, $());
+});
+pass();
+$.NSRunLoop.currentRunLoop.run;
+EOF
 
 cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
