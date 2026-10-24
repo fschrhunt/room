@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `scripts/app.sh` builds `Room.app`, an optional login item with the Room icon
+  that runs one `room agent` pass at login instead of the once-a-minute agent.
 - Checksum-pin shellcheck, shfmt and actionlint in `.github/infra-tools.json`
   instead of installing the latest of each with `brew`.
 

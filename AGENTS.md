@@ -8,6 +8,9 @@
   (`room agent`). room manages one share under the fixed `room` identity: config
   `~/.config/room/config`, agent `~/Library/LaunchAgents/room.plist` (label
   `room`), log `~/Library/Logs/room.log`. Never introduce per-share names.
+- `scripts/app.sh` builds the optional `Room.app` login item from
+  `assets/room.icon`. It stays a shell bundle whose only job is one `room agent`
+  pass; never move mount logic into it.
 - Onboarding is part of the product: `room add` must write config, install and
   load the agent, then mount once interactively so the keychain gets seeded.
   Never make a background agent responsible for first-time authentication.

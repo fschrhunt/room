@@ -94,6 +94,23 @@ The agent runs `room agent`, which waits for the host, clears a stale
 mount point left by an unclean unmount, and retries the mount a few times. It is
 safe to run every minute.
 
+## Room.app (optional)
+
+Rather mount once at login than poll every minute? `scripts/app.sh` builds
+`Room.app` from `assets/room.icon` (it needs Xcode for `actool`). The app runs
+one `room agent` pass, so it waits for the host and retries the same way, then
+quits. Set the share up with `room add` first, then:
+
+```sh
+scripts/app.sh                                   # builds ~/Applications/Room.app
+launchctl bootout gui/$(id -u)/room              # stop the agent...
+rm ~/Library/LaunchAgents/room.plist             # ...for good
+```
+
+Add `Room.app` under System Settings → General → Login Items → Open at Login.
+Unlike the agent, it does not remount after a dropped connection; run
+`room mount` or log in again.
+
 ## Limitations
 
 - macOS only. The mount itself is Finder's, by design.
