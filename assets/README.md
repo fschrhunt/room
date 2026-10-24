@@ -11,13 +11,17 @@ near-black `#111111`; `white/` uses `#FFFFFF`. All backgrounds are transparent.
   intact; use the lockup whenever the symbol and lettering appear together.
 - `room.icon`: the editable Icon Composer app icon. Keep its internal `icon.json`
   and `Assets/` together; use the standalone logo above for the menu-bar template.
-- `Room.icns`: the built Finder **volume** icon. `room` installs it on a mounted
-  share as `.VolumeIcon.icns` (Apple's fixed name) and sets the custom-icon flag.
-  Rebuild it from `room.icon` when the artwork changes.
+- `Room.icns`: the built Finder **volume** icon. It is placed by hand at the
+  share's root as `.VolumeIcon.icns` (Apple's fixed name) with the custom-icon
+  flag set; room never touches it. Rebuild it from `room.icon` when the artwork
+  changes.
+- `sidebar.svg`: the 24 × 24 sidebar glyph, Apple's SF Pro `folder` outline with
+  the Room mark inside. `scripts/symbol.py` turns it into Room.app's `room.sidebar`
+  symbol at exactly the system `folder` symbol's size, so it matches Finder's rows.
 
 Naming: the only Apple-defined file here is the applied `.VolumeIcon.icns` at the
-volume root. Everything else is our own source naming; there is no Apple
-"sidebar icon" asset.
+volume root. Everything else is our own source naming; the sidebar icon is a
+custom SF Symbol inside Room.app, not a file on the share.
 
 No font files, strokes, embedded images, scripts, or external resources are needed.
 Cleanup is limited to consistent SVG formatting; no geometric corrections were

@@ -111,14 +111,22 @@ replaced. `room remove` drops the section again.
 
 ## Room.app (optional)
 
-`scripts/app.sh` builds `Room.app` from `assets/room.icon` (it needs Xcode for
-`actool`) into `~/Applications`. Add it under Open at Login and it can stand in for
+`scripts/app.sh` builds `Room.app` into `~/Applications` (it needs Xcode, and a
+share set up with `room add`). Add it under Open at Login and it can stand in for
 the agent: it runs one `room agent` pass at login, then stays running and runs
 another each time the Mac wakes or a volume unmounts, so the share reconnects on
 its own after sleep. There is no timer; between events it waits in macOS's run
 loop and uses no CPU. Ejecting the share brings it straight back; quit Room.app to
 keep it off. If the agent is installed too, it names the app, so System Settings
 lists the agent as **Room** with its icon.
+
+Room.app also keeps the mounted share in Finder's sidebar under Favorites, with
+Room's symbol and no window, menu or Dock icon. The symbol comes from a Finder Sync
+extension inside the app, which it turns on at launch; if the row shows a plain
+drive icon, turn Room on under Extensions in System Settings > General > Login
+Items & Extensions. Remove the row and the next pass adds it back. The app is
+signed ad hoc, so no developer account is needed; rebuild it after changing the
+share's mount point.
 
 ## Limitations
 

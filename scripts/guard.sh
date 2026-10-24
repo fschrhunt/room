@@ -20,9 +20,12 @@ if git grep -nE 'fschr@|100\.65\.' -- . ':(exclude)LICENSE' ':(exclude)scripts/g
   bad "personal identifier in tracked files"
 fi
 
-# 3. room mounts; it never manages Finder sidebar favorites or the volume icon.
+# 3. bin/room only mounts: the sidebar row is Room.app's job, and neither touches the volume icon.
 if grep -nE 'SidebarFavorites|Sidebar\.svg|VolumeIcon' bin/room | grep .; then
   bad "room must not touch sidebar favorites or the volume icon"
+fi
+if grep -rn 'VolumeIcon' app | grep .; then
+  bad "Room.app must not touch the volume icon"
 fi
 
 # 4. Executables are exactly the scripts.

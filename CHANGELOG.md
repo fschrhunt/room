@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Room.app keeps the share in Finder's sidebar under Favorites with Room's symbol,
+  replacing SidebarFavorites: a Finder Sync extension inside the app supplies the
+  symbol (Apple's folder with the Room mark, at the native folder icon's size),
+  with no window and no second login item. Room.app is now a small Swift app built by `scripts/app.sh`.
 - Room.app stays running after login and runs a pass each time the Mac wakes or a
   volume unmounts, so the share reconnects on its own after sleep, with no timer and
   no second login item. Ejecting the share brings it back; quit Room.app to keep it
