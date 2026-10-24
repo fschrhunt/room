@@ -30,7 +30,16 @@ cat >"$tmp/bin/mount" <<'EOF'
 EOF
 cat >"$tmp/bin/diskutil" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >>"$ROOM_TEST_DIR/diskutil.log"
 rm -f "$ROOM_TEST_DIR/mounted"
+EOF
+cat >"$tmp/bin/probe-ok" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+cat >"$tmp/bin/probe-hang" <<'EOF'
+#!/bin/sh
+sleep 30
 EOF
 cat >"$tmp/bin/security" <<'EOF'
 #!/bin/sh
@@ -44,6 +53,8 @@ export ROOM_OSASCRIPT="$tmp/bin/osascript"
 export ROOM_LAUNCHCTL="$tmp/bin/launchctl"
 export ROOM_DISKUTIL="$tmp/bin/diskutil"
 export ROOM_SECURITY="$tmp/bin/security"
+export ROOM_PROBE="$tmp/bin/probe-ok"
+export ROOM_HEALTH_WAIT=1
 export ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share (smbfs, nodev)'
 
 fails=0
@@ -89,9 +100,38 @@ else
   pass "reject embedded password"
 fi
 
+# The share is mounted soft, through one [SERVER:SHARE] section that is never duplicated.
+nsmb=$HOME/Library/Preferences/nsmb.conf
+"$room" mount >/dev/null
+if [ "$(grep -cxF '[server.local:Share]' "$nsmb")" -eq 1 ] && grep -qx 'soft=yes' "$nsmb"; then
+  pass "soft mount configured once"
+else
+  fail "soft mount configured once"
+fi
+
+# A share Finder mounted at /Volumes/Share-1 is adopted, and room's link follows it.
+ROOM_TEST_MOUNT='//user@server.local/Share on /Volumes/Share-1 (smbfs, nodev)' "$room" agent
+if [ "$(readlink "$HOME/room")" = /Volumes/Share-1 ]; then pass "link follows a moved mount"; else fail "link follows a moved mount"; fi
+
+# A listed mount that no longer answers is unmounted and mounted again.
+: >"$tmp/diskutil.log"
+ROOM_PROBE="$tmp/bin/probe-hang" "$room" agent
+if grep -q '^unmount' "$tmp/diskutil.log" && [ -f "$tmp/mounted" ] && grep -q 'not responding' "$HOME/Library/Logs/room.log"; then
+  pass "dead mount replaced"
+else
+  fail "dead mount replaced"
+fi
+
+# A lock left by a killed pass expires instead of stopping the agent for good.
+lock=$HOME/Library/Logs/.room.lock
+mkdir "$lock" && touch -t 202001010000 "$lock"
+"$room" agent
+if [ -d "$lock" ]; then fail "stale lock expires"; else pass "stale lock expires"; fi
+
 # remove unloads the agent and deletes the files.
 "$room" remove >/dev/null
 if [ -f "$cfg" ]; then fail "remove deletes config"; else pass "remove deletes config"; fi
+if [ -f "$nsmb" ] && grep -qxF '[server.local:Share]' "$nsmb"; then fail "remove drops the soft section"; else pass "remove drops the soft section"; fi
 if grep -q 'bootout gui/' "$tmp/launchctl.log"; then pass "agent booted out"; else fail "agent booted out"; fi
 
 [ "$fails" -eq 0 ] || {

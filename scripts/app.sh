@@ -1,8 +1,9 @@
 #!/bin/sh
-# app: build Room.app, a login item that runs one `room agent` pass at login (wait
-# for the server, then mount through Finder) instead of the once-a-minute launchd
-# agent. It reads the same config, so set the share up with `room add` first. The
-# icon is compiled from assets/room.icon with Xcode's actool, so this needs Xcode.
+# app: build Room.app. The room agent names it (AssociatedBundleIdentifiers), so
+# System Settings lists the agent as Room with this icon; opening the app runs one
+# `room agent` pass. It reads the same config, so set the share up with `room add`
+# first. The icon is compiled from assets/room.icon with Xcode's actool, so this
+# needs Xcode.
 #
 #   scripts/app.sh [DEST]   build to DEST (default ~/Applications/Room.app)
 set -eu

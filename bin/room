@@ -4,8 +4,10 @@
 # room sets up a share, writes the `room` launchd agent, and keeps the share
 # mounted: the agent waits for the host to answer, then asks Finder
 # (`mount volume`) to mount it, so the password comes from the login keychain and
-# the volume behaves like any other. No kernel extension, no FUSE, no Apple
-# Developer account.
+# the volume behaves like any other. Each pass also checks that the mount still
+# answers and replaces a dead one, and the share is mounted soft, so a server that
+# goes away fails calls instead of hanging them. No kernel extension, no FUSE, no
+# Apple Developer account.
 #
 # room manages one share. Its config, agent and log are all just `room`:
 #   ~/.config/room/config
@@ -22,16 +24,21 @@ OSASCRIPT=${ROOM_OSASCRIPT:-/usr/bin/osascript}
 LAUNCHCTL=${ROOM_LAUNCHCTL:-/bin/launchctl}
 DISKUTIL=${ROOM_DISKUTIL:-/usr/sbin/diskutil}
 SECURITY=${ROOM_SECURITY:-/usr/bin/security}
+PROBE=${ROOM_PROBE:-/bin/ls}
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/room/config"
 LOG_FILE="$HOME/Library/Logs/room.log"
 PLIST_FILE="$HOME/Library/LaunchAgents/room.plist"
 LOCK_FILE="$HOME/Library/Logs/.room.lock"
+NSMB_CONF=${ROOM_NSMB_CONF:-$HOME/Library/Preferences/nsmb.conf}
 AGENT_LABEL="room"
 REACH_TRIES=${ROOM_REACH_TRIES:-12}
 REACH_WAIT=${ROOM_REACH_WAIT:-8}
 MOUNT_TRIES=${ROOM_MOUNT_TRIES:-5}
 MOUNT_WAIT=${ROOM_MOUNT_WAIT:-5}
+HEALTH_WAIT=${ROOM_HEALTH_WAIT:-5}
+UNMOUNT_WAIT=${ROOM_UNMOUNT_WAIT:-60}
+LOCK_STALE_MIN=10
 
 SELF=$0
 case $SELF in
@@ -113,13 +120,96 @@ load_config() {
   URL="smb://${USER}@${SERVER}/${SHARE}"
 }
 
-is_mounted() { "$MOUNT" | grep -q " on ${VOLUME} "; }
+# Print where the share is mounted, wherever Finder put it: /Volumes/Share, or
+# /Volumes/Share-1 when a leftover mount point holds the usual name.
+share_mountpoint() {
+  "$MOUNT" | awk -v src="@${SERVER}/${SHARE} on " '
+    index($0, src) && / \(smbfs/ { sub(/^.* on /, ""); sub(/ \(smbfs.*$/, ""); print; exit }'
+}
 
-# Expose the share at ~/room, but never touch an existing path there.
+# Run a command for at most $1 seconds. Fails when it fails or is still running,
+# and never waits on a call stuck in a dead mount.
+within() {
+  _limit=$1
+  shift
+  "$@" >/dev/null 2>&1 &
+  _pid=$!
+  _t=0
+  while kill -0 "$_pid" 2>/dev/null; do
+    if [ "$_t" -ge "$_limit" ]; then
+      kill "$_pid" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    _t=$((_t + 1))
+  done
+  wait "$_pid"
+}
+
+# A mount counts only if it answers: a listed mount whose server is gone hangs.
+responsive() { within "$HEALTH_WAIT" "$PROBE" "$1"; }
+
+# Expose the share at ~/room. Creates the link, or repoints room's own link when
+# the share moved to another mount point; never touches anything else there.
 ensure_link() {
   if [ ! -e "$HOME/room" ] && [ ! -L "$HOME/room" ]; then
-    ln -s "$VOLUME" "$HOME/room"
+    ln -s "$1" "$HOME/room"
+  elif [ -L "$HOME/room" ]; then
+    _cur=$(readlink "$HOME/room")
+    case $_cur in
+    "$VOLUME" | "$VOLUME"-[0-9]*) [ "$_cur" = "$1" ] || ln -sfn "$1" "$HOME/room" ;;
+    esac
   fi
+}
+
+# Mount this share soft, through the user's own nsmb.conf: a dead server then
+# fails calls after about a minute instead of hanging them, and unmount, for up to
+# ten. Scoped to [SERVER:SHARE]; takes effect on the next mount.
+ensure_soft() {
+  _sec="[${SERVER}:${SHARE}]"
+  if [ -f "$NSMB_CONF" ] && awk -v s="$_sec" '
+    $0 == s { f = 1; next } /^\[/ { f = 0 } f && $0 == "soft=yes" { ok = 1 } END { exit !ok }' "$NSMB_CONF"; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$NSMB_CONF")"
+  if [ -f "$NSMB_CONF" ] && grep -qxF "$_sec" "$NSMB_CONF"; then
+    awk -v s="$_sec" '{ print } $0 == s { print "soft=yes" }' "$NSMB_CONF" >"$NSMB_CONF.room" &&
+      mv "$NSMB_CONF.room" "$NSMB_CONF"
+  else
+    if [ -s "$NSMB_CONF" ]; then echo >>"$NSMB_CONF"; fi
+    printf '%s\nsoft=yes\n' "$_sec" >>"$NSMB_CONF"
+  fi
+}
+
+# Drop the section ensure_soft wrote, if it still holds only that line.
+remove_soft() {
+  [ -f "$NSMB_CONF" ] || return 0
+  awk -v s="[${SERVER}:${SHARE}]" '
+    { line[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (line[i] == s && line[i + 1] == "soft=yes" && (i + 2 > NR || line[i + 2] ~ /^(\[|$)/)) { i++; continue }
+        print line[i]
+      }
+    }' "$NSMB_CONF" >"$NSMB_CONF.room" && mv "$NSMB_CONF.room" "$NSMB_CONF"
+  grep -q . "$NSMB_CONF" || rm -f "$NSMB_CONF"
+}
+
+# Unmount the share wherever it is; force a dead mount off.
+unmount_share() {
+  _mp=$(share_mountpoint)
+  [ -n "$_mp" ] || return 0
+  within "$UNMOUNT_WAIT" "$DISKUTIL" unmount "$_mp" ||
+    within "$UNMOUNT_WAIT" "$DISKUTIL" unmount force "$_mp" || true
+  [ -z "$(share_mountpoint)" ]
+}
+
+# Take the agent's lock. A pass killed mid-run leaves it behind, so an old one expires.
+take_lock() {
+  if [ -d "$LOCK_FILE" ] && [ -n "$(find "$LOCK_FILE" -maxdepth 0 -mmin +"$LOCK_STALE_MIN" 2>/dev/null)" ]; then
+    rmdir "$LOCK_FILE" 2>/dev/null || true
+  fi
+  mkdir "$LOCK_FILE" 2>/dev/null
 }
 
 write_config() {
@@ -155,6 +245,10 @@ write_plist() {
   <integer>60</integer>
   <key>LimitLoadToSessionType</key>
   <string>Aqua</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>sh.room.app</string>
+  </array>
 </dict>
 </plist>
 EOF
@@ -190,14 +284,19 @@ cmd_add() {
 
 cmd_mount() {
   load_config
-  if is_mounted; then
-    say "room is already mounted at $VOLUME"
+  ensure_soft
+  _mp=$(share_mountpoint)
+  if [ -n "$_mp" ] && responsive "$_mp"; then
+    ensure_link "$_mp"
+    say "room is already mounted at $_mp"
     return 0
   fi
+  [ -z "$_mp" ] || unmount_share || true
   _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
-  if is_mounted; then
-    ensure_link
-    say "mounted $VOLUME"
+  _mp=$(share_mountpoint)
+  if [ -n "$_mp" ]; then
+    ensure_link "$_mp"
+    say "mounted $_mp"
   else
     warn "could not mount: ${_out:-no error output}"
     warn "the agent will retry every minute; connect once in Finder if the password is missing"
@@ -207,24 +306,30 @@ cmd_mount() {
 
 cmd_unmount() {
   load_config
-  if is_mounted; then
-    "$DISKUTIL" unmount "$VOLUME" >/dev/null 2>&1 || true
-    say "unmounted $VOLUME"
-  fi
+  _mp=$(share_mountpoint)
+  [ -n "$_mp" ] || return 0
+  if unmount_share; then say "unmounted $_mp"; else warn "could not unmount $_mp"; fi
 }
 
 cmd_remove() {
   load_config
   bootout_agent || true
   cmd_unmount
+  remove_soft
   rm -f "$PLIST_FILE" "$CONFIG_FILE" "$LOG_FILE"
   say "room removed"
 }
 
 cmd_status() {
   load_config
-  if is_mounted; then _state=mounted; else _state=down; fi
-  say "$URL -> $VOLUME ($_state)"
+  _mp=$(share_mountpoint)
+  if [ -z "$_mp" ]; then
+    say "$URL -> $VOLUME (down)"
+  elif responsive "$_mp"; then
+    say "$URL -> $_mp (mounted)"
+  else
+    say "$URL -> $_mp (mounted, not responding)"
+  fi
   "$LAUNCHCTL" print "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null | grep -E 'state = |last exit code = |runs = ' || say "agent not loaded"
   tail -n 1 "$LOG_FILE" 2>/dev/null || true
 }
@@ -249,7 +354,19 @@ cmd_doctor() {
   else
     warn "agent:    not loaded"
   fi
-  if is_mounted; then say "mount:    mounted"; else warn "mount:    not mounted"; fi
+  _mp=$(share_mountpoint)
+  if [ -z "$_mp" ]; then
+    warn "mount:    not mounted"
+  elif responsive "$_mp"; then
+    say "mount:    mounted at $_mp"
+  else
+    warn "mount:    $_mp is not responding; the agent replaces it on its next pass"
+  fi
+  if [ -f "$NSMB_CONF" ] && grep -qxF "[${SERVER}:${SHARE}]" "$NSMB_CONF"; then
+    say "soft:     yes ($NSMB_CONF)"
+  else
+    warn "soft:     not set; the next mount sets it"
+  fi
   if "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1; then
     say "server:   ${SERVER}:445 reachable"
   else
@@ -265,28 +382,39 @@ cmd_doctor() {
 cmd_agent() {
   load_config
   mkdir -p "$(dirname "$LOG_FILE")"
-  is_mounted && exit 0
-  mkdir "$LOCK_FILE" 2>/dev/null || exit 0
+  ensure_soft
+  take_lock || exit 0
   trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT HUP INT TERM
+  _mp=$(share_mountpoint)
+  if [ -n "$_mp" ]; then
+    if responsive "$_mp"; then
+      ensure_link "$_mp"
+      exit 0
+    fi
+    log "${_mp} is not responding; unmounting it"
+    if ! unmount_share; then
+      log "could not unmount ${_mp}; retrying next pass"
+      exit 1
+    fi
+  fi
   _i=0
   while [ "$_i" -lt "$REACH_TRIES" ]; do
     "$NC" -z -G 3 -w 3 "$SERVER" 445 >/dev/null 2>&1 && break
     _i=$((_i + 1))
     sleep "$REACH_WAIT"
-    is_mounted && exit 0
+    [ -z "$(share_mountpoint)" ] || exit 0
   done
   if [ "$_i" -ge "$REACH_TRIES" ]; then
     log "server ${SERVER}:445 unreachable; skipping"
     exit 0
   fi
-  if [ -d "$VOLUME" ] && ! is_mounted; then
-    rmdir "$VOLUME" 2>/dev/null || true
-  fi
   _n=1
   while [ "$_n" -le "$MOUNT_TRIES" ]; do
     _out=$("$OSASCRIPT" -e "mount volume \"$URL\"" 2>&1) || true
-    if is_mounted; then
-      log "mounted ${VOLUME} (attempt ${_n})"
+    _mp=$(share_mountpoint)
+    if [ -n "$_mp" ]; then
+      ensure_link "$_mp"
+      log "mounted ${_mp} (attempt ${_n})"
       exit 0
     fi
     log "attempt ${_n} failed: ${_out:-no error output}"
@@ -302,6 +430,7 @@ cmd_uninstall() {
   if [ -f "$CONFIG_FILE" ]; then
     load_config
     cmd_unmount
+    remove_soft
   fi
   rm -f "$PLIST_FILE" "$CONFIG_FILE" "$LOG_FILE" "$LOCK_FILE"
   rmdir "$(dirname "$CONFIG_FILE")" 2>/dev/null || true

@@ -89,27 +89,29 @@ lets Finder do the mounting.
 | Agent | `~/Library/LaunchAgents/room.plist` (label `room`) |
 | Log | `~/Library/Logs/room.log` |
 | Path | `~/room`, a symlink to the mounted share |
+| Soft mount | a `[server:share]` section in `~/Library/Preferences/nsmb.conf` |
 
-The agent runs `room agent`, which waits for the host, clears a stale
-mount point left by an unclean unmount, and retries the mount a few times. It is
-safe to run every minute.
+The agent runs `room agent` at login and every minute. Each pass:
+
+- **Checks that the mount still answers**, not just that it is listed. A mount
+  whose server restarted or dropped the connection is unmounted and mounted again.
+  The check gives up after a few seconds, so a dead mount never hangs the agent.
+- **Finds the share wherever Finder put it.** When a leftover mount point holds
+  `/Volumes/Share`, Finder mounts at `/Volumes/Share-1`; room adopts that mount and
+  repoints `~/room`.
+- **Waits for the host**, then mounts through Finder and retries a few times.
+
+The share is mounted **soft**: when the server goes away, file calls fail after
+about a minute instead of hanging for up to ten, so a dead mount can always be
+replaced. `room remove` drops the section again.
 
 ## Room.app (optional)
 
-Rather mount once at login than poll every minute? `scripts/app.sh` builds
-`Room.app` from `assets/room.icon` (it needs Xcode for `actool`). The app runs
-one `room agent` pass, so it waits for the host and retries the same way, then
-quits. Set the share up with `room add` first, then:
-
-```sh
-scripts/app.sh                                   # builds ~/Applications/Room.app
-launchctl bootout gui/$(id -u)/room              # stop the agent...
-rm ~/Library/LaunchAgents/room.plist             # ...for good
-```
-
-Add `Room.app` under System Settings → General → Login Items → Open at Login.
-Unlike the agent, it does not remount after a dropped connection; run
-`room mount` or log in again.
+`scripts/app.sh` builds `Room.app` from `assets/room.icon` (it needs Xcode for
+`actool`) into `~/Applications`. The agent names it as its app, so System Settings
+lists the agent as **Room** with its icon instead of a bare script. Opening the
+app runs one `room agent` pass. It does not replace the agent: only the agent
+notices a dropped connection and mounts the share again.
 
 ## Limitations
 
@@ -119,6 +121,9 @@ Unlike the agent, it does not remount after a dropped connection; run
 - room manages one share.
 - Each share appears under **Allow in the Background** in System Settings →
   General → Login Items & Extensions. Turning it off stops the mount.
+- A mount point left in `/Volumes` by an unclean unmount belongs to root, so room
+  cannot remove it; it follows the share to `/Volumes/Share-1` until a restart
+  clears the leftover.
 
 ## License
 
