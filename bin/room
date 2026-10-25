@@ -80,6 +80,39 @@ config_get() { awk -F= -v k="$2" '$1==k { sub(/^[^=]*=/, ""); print; exit }' "$1
 
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE"; }
 
+# Decode the %XX escapes in a user or share name, as a URL copied from Finder carries them.
+url_decode() {
+  _in=$1
+  _out=
+  while [ -n "$_in" ]; do
+    case $_in in
+    %[0-9A-Fa-f][0-9A-Fa-f]*)
+      _hex=$(printf '%.2s' "${_in#%}")
+      _out="$_out$(printf '%b' "\\0$(printf '%o' "$((0x$_hex))")")"
+      _in=${_in#???}
+      ;;
+    *)
+      _out="$_out${_in%"${_in#?}"}"
+      _in=${_in#?}
+      ;;
+    esac
+  done
+  printf '%s' "$_out"
+}
+
+# Encode the bytes a URL cannot carry as they are: space, quote, #, %, \, and every
+# non-ASCII byte. The mount URL is built from encoded names; the config keeps the plain ones.
+url_encode() {
+  for _b in $(printf '%s' "$1" | od -An -v -tx1); do
+    case $_b in
+    20 | 22 | 23 | 25 | 3f | 5c | [89a-f][0-9a-f]) printf '%%%s' "$_b" ;;
+    *) printf '%b' "\\0$(printf '%o' "$((0x$_b))")" ;;
+    esac
+  done
+}
+
+# Split an smb:// URL into USER, SERVER and SHARE, with the names decoded. Refuses a
+# password, a port, and a share name with a slash.
 parse_url() {
   case $1 in
   smb://*) _rest=${1#smb://} ;;
@@ -99,7 +132,7 @@ parse_url() {
   *@*)
     _cred=${_auth%@*}
     case $_cred in *:*) die "refusing a password in the URL; let the keychain hold it" ;; esac
-    USER=${_cred##*;}
+    USER=$(url_decode "${_cred##*;}")
     SERVER=${_auth##*@}
     ;;
   *)
@@ -108,9 +141,12 @@ parse_url() {
     ;;
   esac
   [ -n "$SERVER" ] || die "URL has no server: $1"
-  SHARE=$_share
+  case $SERVER in *:*) die "no port in the URL; SMB uses 445: $1" ;; esac
+  SHARE=$(url_decode "$_share")
+  case $SHARE in */*) die "share name has a slash: $1" ;; esac
 }
 
+# Read the config into SERVER, SHARE, USER and VOLUME. URL is the encoded form the mount uses.
 load_config() {
   [ -f "$CONFIG_FILE" ] || die "room is not set up; run: room add <smb://user@host/share>"
   SERVER=$(config_get "$CONFIG_FILE" server)
@@ -118,7 +154,7 @@ load_config() {
   USER=$(config_get "$CONFIG_FILE" user)
   VOLUME=$(config_get "$CONFIG_FILE" volume)
   [ -n "$SERVER" ] && [ -n "$SHARE" ] && [ -n "$VOLUME" ] || die "corrupt config: $CONFIG_FILE"
-  URL="smb://${USER}@${SERVER}/${SHARE}"
+  URL="smb://$(url_encode "$USER")@${SERVER}/$(url_encode "$SHARE")"
 }
 
 # Print where the share is mounted, wherever Finder put it: /Volumes/Share, or
@@ -138,6 +174,8 @@ within() {
   _t=0
   while kill -0 "$_pid" 2>/dev/null; do
     if [ "$_t" -ge "$_limit" ]; then
+      # The job may be a subshell whose child is the call stuck in the mount; stop that too.
+      pkill -P "$_pid" 2>/dev/null || true
       kill "$_pid" 2>/dev/null || true
       return 1
     fi
@@ -168,13 +206,28 @@ ensure_link() {
   fi
 }
 
+# Remove ~/room once the share is forgotten, but only when it is room's own link: it
+# would otherwise dangle at an unmounted volume. Other links are left alone.
+drop_link() {
+  [ -L "$HOME/room" ] || return 0
+  case $(readlink "$HOME/room") in
+  "$VOLUME" | "$VOLUME"-[0-9]*) rm -f "$HOME/room" ;;
+  esac
+}
+
+# True when this share's [SERVER:SHARE] section in nsmb.conf sets soft=yes. The header
+# alone does not count: the setting is what makes the mount soft.
+soft_set() {
+  [ -f "$NSMB_CONF" ] && awk -v s="[${SERVER}:${SHARE}]" '
+    $0 == s { f = 1; next } /^\[/ { f = 0 } f && $0 == "soft=yes" { ok = 1 } END { exit !ok }' "$NSMB_CONF"
+}
+
 # Mount this share soft, through the user's own nsmb.conf: a dead server then
-# fails calls after about a minute instead of hanging them, and unmount, for up to
-# ten. Scoped to [SERVER:SHARE]; takes effect on the next mount.
+# fails calls after about a minute instead of hanging them for up to ten. Scoped to
+# [SERVER:SHARE]; takes effect on the next mount.
 ensure_soft() {
   _sec="[${SERVER}:${SHARE}]"
-  if [ -f "$NSMB_CONF" ] && awk -v s="$_sec" '
-    $0 == s { f = 1; next } /^\[/ { f = 0 } f && $0 == "soft=yes" { ok = 1 } END { exit !ok }' "$NSMB_CONF"; then
+  if soft_set; then
     return 0
   fi
   mkdir -p "$(dirname "$NSMB_CONF")"
@@ -201,7 +254,6 @@ remove_soft() {
   grep -q . "$NSMB_CONF" || rm -f "$NSMB_CONF"
 }
 
-# Unmount the share wherever it is; force a dead mount off.
 # Mount the share through NetFS, the framework Finder mounts with, so the password still
 # comes from the login keychain, but with no UI: a background pass never raises a dialog. A
 # leftover mount point at $VOLUME that we own is mounted onto directly, so the share never
@@ -227,6 +279,7 @@ function run(argv) {
 EOF
 }
 
+# Unmount the share wherever it is; force a dead mount off.
 unmount_share() {
   _mp=$(share_mountpoint)
   [ -n "$_mp" ] || return 0
@@ -300,6 +353,10 @@ bootout_agent() {
 cmd_add() {
   [ $# -eq 1 ] || die "usage: room add <smb://user@host/share>"
   parse_url "$1"
+  # One share per room: replacing another would leave its agent settings and mount behind.
+  if [ -f "$CONFIG_FILE" ] && [ "$(config_get "$CONFIG_FILE" server)/$(config_get "$CONFIG_FILE" share)" != "$SERVER/$SHARE" ]; then
+    die "room already manages $(config_get "$CONFIG_FILE" server)/$(config_get "$CONFIG_FILE" share); run room remove first"
+  fi
   VOLUME="/Volumes/$SHARE"
   mkdir -p "$(dirname "$CONFIG_FILE")" "$(dirname "$LOG_FILE")"
   write_config
@@ -347,6 +404,7 @@ cmd_remove() {
   bootout_agent || true
   cmd_unmount
   remove_soft
+  drop_link
   rm -f "$PLIST_FILE" "$CONFIG_FILE" "$LOG_FILE"
   say "room removed"
 }
@@ -393,7 +451,7 @@ cmd_doctor() {
   else
     warn "mount:    $_mp is not responding; the agent replaces it on its next pass"
   fi
-  if [ -f "$NSMB_CONF" ] && grep -qxF "[${SERVER}:${SHARE}]" "$NSMB_CONF"; then
+  if soft_set; then
     say "soft:     yes ($NSMB_CONF)"
   else
     warn "soft:     not set; the next mount sets it"
@@ -415,7 +473,10 @@ cmd_agent() {
   mkdir -p "$(dirname "$LOG_FILE")"
   ensure_soft
   take_lock || exit 0
-  trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT HUP INT TERM
+  # A signal ends the pass; the EXIT trap then releases the lock. A shell would otherwise
+  # run on after a signal trap, without the lock.
+  trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
+  trap 'exit 1' HUP INT TERM
   _mp=$(share_mountpoint)
   if [ -n "$_mp" ] && responsive "$_mp"; then
     # A share Finder put under another name (Share-1) moves back to $VOLUME when nothing
@@ -477,6 +538,7 @@ cmd_uninstall() {
     load_config
     cmd_unmount
     remove_soft
+    drop_link
   fi
   rm -f "$PLIST_FILE" "$CONFIG_FILE" "$LOG_FILE" "$LOCK_FILE"
   rmdir "$(dirname "$CONFIG_FILE")" 2>/dev/null || true

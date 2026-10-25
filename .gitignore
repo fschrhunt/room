@@ -4,3 +4,5 @@
 
 # macOS AppleDouble sidecars (SMB shares without xattr support)
 ._*
+config.bat
+node_modules

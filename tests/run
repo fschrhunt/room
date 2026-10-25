@@ -124,6 +124,20 @@ else
   pass "reject embedded password"
 fi
 
+# A port is refused, and a second share waits until room remove.
+if "$room" add 'smb://user@server.local:445/Share' 2>&1 | grep -q 'no port'; then pass "reject a port"; else fail "reject a port"; fi
+if "$room" add 'smb://user@server.local/Other' 2>&1 | grep -q 'run room remove first'; then
+  pass "refuse a second share"
+else
+  fail "refuse a second share"
+fi
+assert_contains "$cfg" '^share=Share$' "second share leaves the config alone"
+
+# A share name with %20 mounts under its plain name, and the mount URL is encoded again.
+HOME=$tmp/home-enc "$room" add 'smb://user@server.local/Public%20Files' >/dev/null 2>&1 || true
+assert_contains "$tmp/home-enc/.config/room/config" '^volume=/Volumes/Public Files$' "encoded share keeps its plain name"
+assert_contains "$tmp/osascript.log" 'smb://user@server.local/Public%20Files' "mount URL is encoded"
+
 # The share is mounted soft, through one [SERVER:SHARE] section that is never duplicated.
 nsmb=$HOME/Library/Preferences/nsmb.conf
 "$room" mount >/dev/null
@@ -132,6 +146,11 @@ if [ "$(grep -cxF '[server.local:Share]' "$nsmb")" -eq 1 ] && grep -qx 'soft=yes
 else
   fail "soft mount configured once"
 fi
+
+# doctor does not count a section header without soft=yes as soft; the next mount restores it.
+printf '[server.local:Share]\n' >"$nsmb"
+if "$room" doctor 2>&1 | grep -q 'soft: *not set'; then pass "doctor needs soft=yes"; else fail "doctor needs soft=yes"; fi
+"$room" mount >/dev/null
 
 # A share Finder mounted at /Volumes/Share-1 moves back to /Volumes/Share, without force
 # and without Finder: the agent mounts through NetFS with no UI.
@@ -195,10 +214,12 @@ rm -f "$tmp/mounted"
 if grep -q -- "$left exact\$" "$tmp/osascript.log" && [ -w "$left" ]; then pass "leftover mount point reused"; else fail "leftover mount point reused"; fi
 mv "$cfg.bak" "$cfg"
 
-# remove unloads the agent and deletes the files.
+# remove unloads the agent, deletes the files and drops room's link.
+ln -sfn /Volumes/Share "$HOME/room"
 "$room" remove >/dev/null
 if [ -f "$cfg" ]; then fail "remove deletes config"; else pass "remove deletes config"; fi
 if [ -f "$nsmb" ] && grep -qxF '[server.local:Share]' "$nsmb"; then fail "remove drops the soft section"; else pass "remove drops the soft section"; fi
+if [ -L "$HOME/room" ]; then fail "remove drops the room link"; else pass "remove drops the room link"; fi
 if grep -q 'bootout gui/' "$tmp/launchctl.log"; then pass "agent booted out"; else fail "agent booted out"; fi
 
 [ "$fails" -eq 0 ] || {

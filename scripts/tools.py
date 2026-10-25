@@ -3,8 +3,9 @@
 `python3 scripts/tools.py ensure NAME` prints the path to the pinned binary, or
 nothing when this host is not pinned (an Intel Mac, say), so the caller falls
 back to a PATH install. Versions, URLs and hashes live in
-`.github/infra-tools.json`; see `deps.yml` for how they are refreshed.
+`.github/infra-tools.json`; bump them there, together.
 """
+import utils.session
 import hashlib
 import io
 import json
