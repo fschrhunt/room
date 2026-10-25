@@ -25,6 +25,20 @@
   `~/Library/Preferences/nsmb.conf`, so a dead server fails calls instead of
   hanging them; `room remove` drops it.
 - A lock left by a killed agent pass now expires instead of stopping the agent.
+- A pass that receives SIGTERM or SIGINT now exits and releases its lock, instead of
+  carrying on without it.
+- `room doctor` reports the soft mount only when the share's section sets `soft=yes`.
+- `room remove` and `room uninstall` delete the `~/room` link room made, so none is
+  left pointing at an unmounted share.
+- Share names with spaces or other URL-unsafe characters are encoded in the mount URL,
+  and `%XX` escapes in a URL are decoded, so `Public%20Files` and `Public Files` both
+  mount at `/Volumes/Public Files`.
+- `room add` refuses a second share, or a port in the URL, with a message, instead of
+  adding a half-working setup.
+- A probe that hangs on a dead mount no longer leaves its child process running.
+- `install.sh --help` works under `curl | sh`.
+- `Room.app` builds with share names containing `&`, `<`, `>` or `|`.
+- The release checks accept a changelog heading without a date, as `release-notes.sh` does.
 - `scripts/app.sh` builds `Room.app` from the Room icon; the agent names it, so
   System Settings lists the agent as Room.
 - Checksum-pin shellcheck, shfmt and actionlint in `.github/infra-tools.json`

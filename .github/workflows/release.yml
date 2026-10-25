@@ -35,7 +35,7 @@ jobs:
         run: |
           test "$GITHUB_REF" = refs/heads/main || { echo 'Run releases from main.' >&2; exit 1; }
           printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Invalid release tag: $TAG" >&2; exit 1; }
-          grep -q "^## $TAG " CHANGELOG.md || { echo "CHANGELOG.md has no ## $TAG section" >&2; exit 1; }
+          grep -Eq "^## ${TAG}( |\$)" CHANGELOG.md || { echo "CHANGELOG.md has no ## $TAG section" >&2; exit 1; }
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "$TAG already exists" >&2
             exit 1
@@ -63,7 +63,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$TAG is not on main" >&2; exit 1; }
-          grep -q "^## $TAG " CHANGELOG.md || { echo "CHANGELOG.md has no ## $TAG section" >&2; exit 1; }
+          grep -Eq "^## ${TAG}( |\$)" CHANGELOG.md || { echo "CHANGELOG.md has no ## $TAG section" >&2; exit 1; }
       - run: ./x check
       - name: Check the changelog section
         env:

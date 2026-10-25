@@ -39,7 +39,12 @@ while [ $# -gt 0 ]; do
     shift
     ;;
   -h | --help)
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    # Printed here, not read from $0: under curl | sh, $0 is not this file.
+    cat <<'EOF'
+usage: install.sh [--version vX.Y.Z] [--dir DIR]
+Installs room from its GitHub release into ~/.local/bin, or DIR, or $ROOM_INSTALL_DIR.
+Run it again to update. $ROOM_RELEASES replaces the release host, for testing.
+EOF
     exit 0
     ;;
   *) fail "unknown option $1; options: --version vX.Y.Z, --dir DIR" ;;
