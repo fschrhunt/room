@@ -66,7 +66,9 @@ password and remember it in the keychain. From then on the agent keeps it
 mounted, including after a restart or a wake.
 
 Run `room` with no arguments for status, or `room doctor` for a full check.
-`room add` is safe to re-run.
+`room add` is safe to re-run for the same share. To switch shares, run `room remove`
+first. A share name may carry `%20` and other URL escapes, as Finder writes them; the
+URL takes no port, since SMB always uses 445.
 
 ```sh
 room status            # mount and agent state
@@ -80,8 +82,8 @@ room uninstall         # remove room entirely
 
 ## How it works
 
-For each share, `room` writes a small config and a per-share launchd agent, then
-lets macOS's own mount path, NetFS (what Finder uses), do the mounting.
+`room` writes a small config and a launchd agent for its one share, then lets
+macOS's own mount path, NetFS (what Finder uses), do the mounting.
 
 | What | Where |
 | --- | --- |
@@ -133,8 +135,8 @@ share's mount point.
 - macOS only. The mount uses NetFS, Finder's own framework, by design.
 - The first `room add` needs a logged-in session so Finder can prompt for the
   password. Adding a share over SSH? Connect once in Finder to seed the keychain.
-- room manages one share.
-- Each share appears under **Allow in the Background** in System Settings →
+- room manages one share; `room add` refuses a different one until `room remove`.
+- The agent appears under **Allow in the Background** in System Settings →
   General → Login Items & Extensions. Turning it off stops the mount.
 - A leftover mount point you own (the usual case) is reused. One that belongs to
   root cannot be; room then follows the share to `/Volumes/Share-1` until a restart

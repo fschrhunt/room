@@ -25,8 +25,14 @@ app=$work/Room.app
 appex=$app/Contents/PlugIns/RoomSidebar.appex
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$appex/Contents/MacOS"
 
+# Escape a value as XML text and as a sed replacement with | as the delimiter, so a share name
+# holding &, <, > or | fills the templates intact.
+xml_sed() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/[\\|]/\\&/g' -e 's/&/\\&/g'
+}
+
 # Fill a template's build-time values: the version and the share's mount point.
-fill() { sed -e "s|__VERSION__|$version|g" -e "s|__VOLUME__|$volume|g" "$1" >"$2"; }
+fill() { sed -e "s|__VERSION__|$version|g" -e "s|__VOLUME__|$(xml_sed "$volume")|g" "$1" >"$2"; }
 
 # Compile one Swift target, showing swiftc's output only on failure: the app's deprecated
 # LSSharedFileList calls are intentional, so their warnings are not news.

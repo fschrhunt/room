@@ -24,7 +24,7 @@ git fetch -q origin main --tags
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "main is not origin/main; pull first"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && fail "$tag already exists"
 
-if ! grep -q "^## $tag " CHANGELOG.md; then
+if ! grep -Eq "^## $tag( |\$)" CHANGELOG.md; then
   # First run: name the Unreleased section in a pull request.
   grep -q '^## Unreleased$' CHANGELOG.md || fail "CHANGELOG.md has no ## Unreleased section to release"
   notes=$(awk '/^## /{on = ($0 == "## Unreleased"); next} on' CHANGELOG.md | grep -c '[^[:space:]]' || true)
