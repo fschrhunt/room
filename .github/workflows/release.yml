@@ -17,6 +17,7 @@ permissions: {}
 
 jobs:
   tag:
+    environment: release
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -114,6 +115,7 @@ jobs:
 
   # Refreshes the Homebrew formula after publishing the release.
   formula:
+    environment: release
     needs: release
     runs-on: ubuntu-latest
     permissions:
